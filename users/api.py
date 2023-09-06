@@ -1,40 +1,23 @@
-from ninja import Router, Schema
+from ninja import Router
 from ninja.errors import HttpError
+from ninja.pagination import paginate
 from .models import Profile, User
-from django.contrib.auth import authenticate, login
+from django.contrib.auth import authenticate, login, logout
+from .schema import ProfileSchema, NotFoundSchema, ProfileIn
+from django.contrib.auth.decorators import login_required
+
 
 router = Router()
-
-class UserSchema(Schema):
-    id: int
-    username: str
-    email: str
-    first_name: str = None
-    last_name: str = None
-
-class ProfileSchema(Schema):
-    id: int
-    bio: str = None
-    picture: str = None
-    user: UserSchema
-    friends: list[str]
-    followers: list[str]
-
-class NotFoundSchema(Schema):
-    message: str
 
 
 @router.get('/', response={200: list[ProfileSchema], 404: NotFoundSchema})
 def list_profiles(request, username: str = None):
     if username:
         return Profile.objects.filter(user__username__icontains=username)
-    # return Profile.objects.all()
-    print(Profile.objects.all())
     return Profile.objects.all()
-    # return profiles.values('id', 'bio', 'picture', 'user__username', 'friends__user__username', 'followers__user__username')
 
 
-@router.get('/{id}', response={200: ProfileSchema, 404: NotFoundSchema})
+@router.get('/{int:id}', response={200: ProfileSchema, 404: NotFoundSchema})
 def get_profile(request, id: int):
     try:
         return 200, Profile.objects.get(id=id)
@@ -42,30 +25,32 @@ def get_profile(request, id: int):
         raise HttpError(404, f"Profile with id {id} not found")
 
 
-@router.post('/create_user', response={200: ProfileSchema})
+@router.post('/create_user', response={201: ProfileSchema})
 def create_user(request, username: str, password: str, email: str):
-
     if User.objects.filter(username=username).exists():
         raise HttpError(400, "Username already exists!")
-
     user = User(username=username, email=email)
-    user.set_password(password)
+    user.set_password(password) # Hashes the password and saves
     user.save()
-    profile = Profile(user=user, bio="", picture="")
-    print(profile)
-    profile.save()
-    return 201, profile
-
+    return 201, Profile.objects.create(user=user, bio="", picture="")
 
 
 @router.post('/login', response={200: ProfileSchema, 404: NotFoundSchema})
-def login(request, username: str, password: str):
-    user = authenticate(request, username=username, password=password)
+def profile_login(request, profile: ProfileIn):
+    user = authenticate(request, username=profile.username, password=profile.password)
     if user is not None:
         login(request, user)
         return Profile.objects.get(user=user)
     else:
         raise HttpError(400, "Invalid credentials!")
-        
 
-# @router.post()
+
+@router.post('/logout', response={200: str})
+def profile_logout(request):
+    if request.user.is_authenticated:
+        logout(request)
+        return 200, "Successfully logged out"
+    else:
+        "Already logged out!"
+
+
